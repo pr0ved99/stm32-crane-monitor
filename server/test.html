@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<title>STM32 Serial Raw Log (Web Serial)</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 720px;
+    margin: 24px auto;
+  }
+  .row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin: 10px 0;
+  }
+  .pill {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  #log {
+    height: 40vh;
+    overflow: auto;
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #tx {
+    width: 100%;
+    height: 120px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 8px;
+    border: 1px solid #eee;
+    background: #fff;
+  }
+  .hint {
+    color: #666;
+    font-size: 12px;
+  }
+</style>
+
+<body>
+  <h1>STM32 Serial Raw Log</h1>
+
+  <div class="row">
+    <button id="btnConnect">Connect Serial</button>
+    <span id="stat" class="pill">disconnected</span>
+  </div>
+
+  <div class="row">
+    <button id="clear">Clear Log</button>
+  </div>
+
+  <pre id="log"></pre>
+
+  <h2>Send JSON</h2>
+  <div class="row" style="align-items: start">
+    <textarea
+      id="tx"
+      placeholder='예: {"led":{"r":25,"g":50,"b":75}}'
+    ></textarea>
+  </div>
+  <div class="row">
+    <button id="btnSend" disabled>Send JSON</button>
+    <label class="hint">Ctrl+Enter 로도 전송할 수 있어요.</label>
+  </div>
+</body>
+
+<script>
+  let port, reader;
+  let isConnected = false;
+  const stat = document.getElementById("stat");
+  const log = document.getElementById("log");
+  const tx = document.getElementById("tx");
+  const btnSend = document.getElementById("btnSend");
+
+  function setStatus(s) {
+    stat.textContent = s;
+  }
+  function setConnected(on) {
+    isConnected = on;
+    btnSend.disabled = !on;
+    setStatus(on ? "connected" : "disconnected");
+  }
+  function appendLog(line) {
+    log.textContent += line + "\n";
+    log.scrollTop = log.scrollHeight;
+  }
+
+  document.getElementById("clear").addEventListener("click", () => {
+    log.textContent = "";
+  });
+
+  // Ctrl+Enter로 전송
+  tx.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("btnSend").click();
+    }
+  });
+
+  // 시리얼 연결
+  document.getElementById("btnConnect").addEventListener("click", async () => {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      setConnected(true);
+
+      // 수신(원문 라인 단위)
+      const decoder = new TextDecoderStream();
+      port.readable.pipeTo(decoder.writable);
+      reader = decoder.readable.getReader();
+
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+
+        buf += value;
+        let idx;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          let line = buf.slice(0, idx); // '\n' 제외
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          // CR 제거하고 싶으면 아래 주석 해제
+          // line = line.replace(/\r$/, "");
+          appendLog(line);
+        }
+      }
+      if (buf.length) appendLog(buf);
+    } catch (e) {
+      console.error(e);
+      setStatus("error: " + e.message);
+      alert("시리얼 연결 실패: " + e.message);
+      setConnected(false);
+    }
+  });
+
+  // JSON 전송
+  document.getElementById("btnSend").addEventListener("click", async () => {
+    if (!isConnected || !port?.writable) {
+      alert("먼저 시리얼에 연결하세요.");
+      return;
+    }
+
+    let text = tx.value.trim();
+    if (!text) {
+      alert("JSON을 입력하세요.");
+      return;
+    }
+
+    // JSON 유효성 검사 (문자열이면 그대로, 객체면 stringify)
+    try {
+      // 사용자가 object 리터럴 문자열을 넣었다면 parse→정렬하여 전송
+      const parsed = JSON.parse(text);
+      text = JSON.stringify(parsed); // 공백 제거된 compact JSON
+    } catch (_) {
+      // parse 실패 → 사용자가 이미 JSON 외 문자열(예: 명령) 보낼 의도일 수 있음
+      // 여기서는 "정확히 JSON만" 보내고 싶다면 에러로 막기:
+      alert("유효한 JSON이 아닙니다.");
+      return;
+    }
+
+    // 끝에 개행이 없으면 MCU 쪽에서 한 줄 프레이밍되도록 '\n' 추가
+    if (!text.endsWith("\n")) text += "\n";
+
+    try {
+      const writer = port.writable.getWriter();
+      const encoded = new TextEncoder().encode(text);
+      await writer.write(encoded);
+      writer.releaseLock();
+
+      appendLog("> " + text.replace(/\n$/, "")); // 송신 로그 프리픽스
+    } catch (e) {
+      console.error(e);
+      alert("전송 실패: " + e.message);
+    }
+  });
+
+  // 초기 표시
+  setConnected(false);
+</script>
