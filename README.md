@@ -5,7 +5,6 @@
 <br/>
 
 ## 🎥 시연 영상 (Demo Video)
-**실제 STM32 센서와 웹 클라이언트 간의 실시간 연동 모습을 확인해보세요.**
 
 [![시연 영상](http://img.youtube.com/vi/o8msN-PNJuo/0.jpg)](https://youtu.be/o8msN-PNJuo)
 
